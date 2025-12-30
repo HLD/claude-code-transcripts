@@ -413,3 +413,80 @@ class TestAllCommand:
         assert "project-a" not in result.output
         # Should not create any files
         assert not (output_dir / "index.html").exists()
+
+
+class TestGitLabSnippet:
+    """Tests for GitLab snippet upload functionality."""
+
+    def test_create_gitlab_snippet_success(self, httpx_mock, output_dir):
+        """Test successful GitLab snippet creation."""
+        from claude_code_transcripts import create_gitlab_snippet
+
+        # Create test HTML files
+        (output_dir / "index.html").write_text("<html>Test</html>")
+        (output_dir / "page1.html").write_text("<html>Page 1</html>")
+
+        # Mock the GitLab API response
+        httpx_mock.add_response(
+            method="POST",
+            url="https://gitlab.example.com/api/v4/snippets",
+            json={
+                "id": 12345,
+                "web_url": "https://gitlab.example.com/-/snippets/12345",
+            },
+        )
+
+        snippet_id, snippet_url = create_gitlab_snippet(
+            output_dir,
+            gitlab_url="https://gitlab.example.com",
+            gitlab_token="test-token",
+        )
+
+        assert snippet_id == "12345"
+        assert snippet_url == "https://gitlab.example.com/-/snippets/12345"
+
+    def test_create_gitlab_snippet_missing_token(self, output_dir):
+        """Test error when GitLab token is missing."""
+        from claude_code_transcripts import create_gitlab_snippet
+        import click
+
+        (output_dir / "index.html").write_text("<html>Test</html>")
+
+        with pytest.raises(click.ClickException) as exc_info:
+            create_gitlab_snippet(
+                output_dir,
+                gitlab_url="https://gitlab.example.com",
+                gitlab_token=None,
+            )
+
+        assert "GITLAB_TOKEN" in str(exc_info.value)
+
+    def test_create_gitlab_snippet_missing_url(self, output_dir):
+        """Test error when GitLab URL is missing."""
+        from claude_code_transcripts import create_gitlab_snippet
+        import click
+
+        (output_dir / "index.html").write_text("<html>Test</html>")
+
+        with pytest.raises(click.ClickException) as exc_info:
+            create_gitlab_snippet(
+                output_dir,
+                gitlab_url=None,
+                gitlab_token="test-token",
+            )
+
+        assert "GITLAB_URL" in str(exc_info.value)
+
+    def test_create_gitlab_snippet_no_html_files(self, output_dir):
+        """Test error when no HTML files are found."""
+        from claude_code_transcripts import create_gitlab_snippet
+        import click
+
+        with pytest.raises(click.ClickException) as exc_info:
+            create_gitlab_snippet(
+                output_dir,
+                gitlab_url="https://gitlab.example.com",
+                gitlab_token="test-token",
+            )
+
+        assert "No HTML files" in str(exc_info.value)

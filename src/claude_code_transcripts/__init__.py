@@ -1144,6 +1144,68 @@ def create_gist(output_dir, public=False):
         )
 
 
+def create_gitlab_snippet(output_dir, gitlab_url=None, gitlab_token=None):
+    """Create a GitLab snippet from the HTML files in output_dir.
+
+    Args:
+        output_dir: Directory containing HTML files to upload
+        gitlab_url: GitLab instance URL (e.g., https://gitlab.example.com)
+        gitlab_token: GitLab personal access token
+
+    Returns:
+        Tuple of (snippet_id, snippet_url) on success.
+
+    Raises:
+        click.ClickException on failure.
+    """
+    if not gitlab_url:
+        raise click.ClickException(
+            "GitLab URL not specified. Set GITLAB_URL environment variable."
+        )
+    if not gitlab_token:
+        raise click.ClickException(
+            "GitLab token not specified. Set GITLAB_TOKEN environment variable."
+        )
+
+    output_dir = Path(output_dir)
+    html_files = list(output_dir.glob("*.html"))
+    if not html_files:
+        raise click.ClickException("No HTML files found to upload to GitLab snippet.")
+
+    # Build snippet files payload
+    files = []
+    for html_file in sorted(html_files):
+        files.append(
+            {
+                "file_path": html_file.name,
+                "content": html_file.read_text(encoding="utf-8"),
+            }
+        )
+
+    # Create snippet via GitLab API
+    api_url = f"{gitlab_url.rstrip('/')}/api/v4/snippets"
+    headers = {"PRIVATE-TOKEN": gitlab_token, "Content-Type": "application/json"}
+    payload = {
+        "title": "Claude Code Transcript",
+        "visibility": "private",
+        "files": files,
+    }
+
+    try:
+        response = httpx.post(api_url, headers=headers, json=payload, timeout=30.0)
+        response.raise_for_status()
+        data = response.json()
+        snippet_id = str(data["id"])
+        snippet_url = data["web_url"]
+        return snippet_id, snippet_url
+    except httpx.HTTPStatusError as e:
+        raise click.ClickException(
+            f"GitLab API error: {e.response.status_code} - {e.response.text}"
+        )
+    except httpx.RequestError as e:
+        raise click.ClickException(f"Failed to connect to GitLab: {e}")
+
+
 def generate_pagination_html(current_page, total_pages):
     return _macros.pagination(current_page, total_pages)
 
@@ -1358,6 +1420,11 @@ def cli():
     help="Upload to GitHub Gist and output a gistpreview.github.io URL.",
 )
 @click.option(
+    "--gitlab",
+    is_flag=True,
+    help="Upload to GitLab snippet. Requires GITLAB_URL and GITLAB_TOKEN env vars.",
+)
+@click.option(
     "--json",
     "include_json",
     is_flag=True,
@@ -1374,7 +1441,9 @@ def cli():
     default=10,
     help="Maximum number of sessions to show (default: 10)",
 )
-def local_cmd(output, output_auto, repo, gist, include_json, open_browser, limit):
+def local_cmd(
+    output, output_auto, repo, gist, gitlab, include_json, open_browser, limit
+):
     """Select and convert a local Claude Code session to HTML."""
     projects_folder = Path.home() / ".claude" / "projects"
 
@@ -1416,7 +1485,7 @@ def local_cmd(output, output_auto, repo, gist, include_json, open_browser, limit
 
     # Determine output directory and whether to open browser
     # If no -o specified, use temp dir and open browser by default
-    auto_open = output is None and not gist and not output_auto
+    auto_open = output is None and not gist and not gitlab and not output_auto
     if output_auto:
         # Use -o as parent dir (or current dir), with auto-named subdirectory
         parent_dir = Path(output) if output else Path(".")
@@ -1447,6 +1516,15 @@ def local_cmd(output, output_auto, repo, gist, include_json, open_browser, limit
         click.echo(f"Gist: {gist_url}")
         click.echo(f"Preview: {preview_url}")
 
+    if gitlab:
+        click.echo("Creating GitLab snippet...")
+        gitlab_url = os.environ.get("GITLAB_URL")
+        gitlab_token = os.environ.get("GITLAB_TOKEN")
+        snippet_id, snippet_url = create_gitlab_snippet(
+            output, gitlab_url=gitlab_url, gitlab_token=gitlab_token
+        )
+        click.echo(f"Snippet: {snippet_url}")
+
     if open_browser or auto_open:
         index_url = (output / "index.html").resolve().as_uri()
         webbrowser.open(index_url)
@@ -1476,6 +1554,11 @@ def local_cmd(output, output_auto, repo, gist, include_json, open_browser, limit
     help="Upload to GitHub Gist and output a gistpreview.github.io URL.",
 )
 @click.option(
+    "--gitlab",
+    is_flag=True,
+    help="Upload to GitLab snippet. Requires GITLAB_URL and GITLAB_TOKEN env vars.",
+)
+@click.option(
     "--json",
     "include_json",
     is_flag=True,
@@ -1487,11 +1570,13 @@ def local_cmd(output, output_auto, repo, gist, include_json, open_browser, limit
     is_flag=True,
     help="Open the generated index.html in your default browser (default if no -o specified).",
 )
-def json_cmd(json_file, output, output_auto, repo, gist, include_json, open_browser):
+def json_cmd(
+    json_file, output, output_auto, repo, gist, gitlab, include_json, open_browser
+):
     """Convert a Claude Code session JSON/JSONL file to HTML."""
     # Determine output directory and whether to open browser
     # If no -o specified, use temp dir and open browser by default
-    auto_open = output is None and not gist and not output_auto
+    auto_open = output is None and not gist and not gitlab and not output_auto
     if output_auto:
         # Use -o as parent dir (or current dir), with auto-named subdirectory
         parent_dir = Path(output) if output else Path(".")
@@ -1522,6 +1607,15 @@ def json_cmd(json_file, output, output_auto, repo, gist, include_json, open_brow
         preview_url = f"https://gistpreview.github.io/?{gist_id}/index.html"
         click.echo(f"Gist: {gist_url}")
         click.echo(f"Preview: {preview_url}")
+
+    if gitlab:
+        click.echo("Creating GitLab snippet...")
+        gitlab_url = os.environ.get("GITLAB_URL")
+        gitlab_token = os.environ.get("GITLAB_TOKEN")
+        snippet_id, snippet_url = create_gitlab_snippet(
+            output, gitlab_url=gitlab_url, gitlab_token=gitlab_token
+        )
+        click.echo(f"Snippet: {snippet_url}")
 
     if open_browser or auto_open:
         index_url = (output / "index.html").resolve().as_uri()
